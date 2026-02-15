@@ -4,7 +4,7 @@ This guide prepares authentication for `run-a1.sh`.
 
 ## 1. Create local OCI CLI config
 
-Run:
+From the repository root, run:
 
 ```bash
 oci setup config
@@ -16,11 +16,11 @@ The CLI prompts for:
 - Region (use `us-ashburn-1` for your case)
 - API key file path
 
-Prompt-by-prompt quick answers:
+Prompt-by-prompt answers:
 - `Enter a location for your config [...]` -> `./keys/oci/config`
 - `Enter a user OCID` -> paste user OCID from OCI Console profile
 - `Enter a tenancy OCID` -> paste tenancy OCID from OCI Console tenancy page
-- `Enter a region` -> `us-ashburn-1`
+- `Enter a region` -> your OCI region (example: `us-ashburn-1`)
 - `Enter the full path to the private key` -> `./keys/oci/oci_api_key.pem`
 - passphrase prompt -> press Enter for no passphrase (simplest for automation)
 
@@ -52,7 +52,7 @@ Open `./keys/oci/config` and confirm your profile (usually `DEFAULT`) contains:
 ## 4. Test auth before provisioning
 
 ```bash
-OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile DEFAULT iam region list
+OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile <profile-name> iam region list
 ```
 
 If this returns JSON, auth is working.
@@ -63,6 +63,7 @@ Edit `a1-spec.yaml`:
 - `oci.profile` must match your profile name in `./keys/oci/config`.
 - `oci.config_file` should be `./keys/oci/config` (default).
 - `oci.compartment_ocid` must be your target compartment OCID.
+- `oci.region` must match your intended OCI region.
 
 ## Common problems
 
@@ -87,4 +88,4 @@ Best fix:
 1. Run `oci setup config`
 2. Upload the generated OCI public key to OCI Console -> User -> API Keys
 3. Re-test with:
-   - `OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile DEFAULT iam region list`
+   - `OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile <profile-name> iam region list`

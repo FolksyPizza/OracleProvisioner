@@ -41,7 +41,7 @@ Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logi
 
 ## Quick Start
 
-1. Make script executable:
+1. From the repository root, make the script executable:
 
 ```bash
 chmod +x run-a1.sh
@@ -53,25 +53,37 @@ chmod +x run-a1.sh
 ./run-a1.sh --setup
 ```
 
-When `oci setup config` starts, use this:
+When `oci setup config` starts, use:
 - `Enter a location for your config [...]` -> `./keys/oci/config`
-- `Enter a user OCID` -> paste from OCI Console profile
-- `Enter a tenancy OCID` -> paste from Tenancy details
-- `Enter a region` -> `us-ashburn-1`
+- `Enter a user OCID` -> paste your user OCID
+- `Enter a tenancy OCID` -> paste your tenancy OCID
+- `Enter a region` -> your OCI region (example: `us-ashburn-1`)
 - `Enter the full path to the private key` -> `./keys/oci/oci_api_key.pem`
-- passphrase prompt -> press Enter for no passphrase
+- passphrase prompt -> press Enter (blank) for automation
 
 If you see a Python `SyntaxWarning`, continue unless an actual `ERROR` follows.
 
-3. Edit `a1-spec.yaml` and set:
+3. Edit `a1-spec.yaml`:
 
 ```yaml
 oci:
   config_file: "./keys/oci/config"
-  compartment_ocid: "ocid1.compartment.oc1..REPLACE_ME"
+  profile: "DEFAULT"
+  region: "<your-region>"
+  compartment_ocid: "<your-compartment-ocid>"
 ```
 
-4. Start provisioning:
+4. Upload OCI API public key:
+- OCI Console -> User/Profile -> API Keys -> Add API Key
+- Upload the public key created during setup (`.pub` / `_public.pem`)
+
+5. Verify auth:
+
+```bash
+OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile <profile-name> iam region list
+```
+
+6. Start provisioning:
 
 ```bash
 ./run-a1.sh --config a1-spec.yaml
@@ -85,6 +97,11 @@ Default target in `a1-spec.yaml`:
 - Memory: `24 GB`
 - Boot volume: `160 GB`
 - Region: `us-ashburn-1`
+
+Update these values for your environment before running:
+- `oci.region`
+- `oci.compartment_ocid`
+- `oci.profile` (if not `DEFAULT`)
 
 SSH keys are stored at:
 - `./keys/ampere_a1_key`
