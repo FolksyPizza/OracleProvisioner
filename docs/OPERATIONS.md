@@ -29,7 +29,7 @@ If IAM is too restrictive, launch/network commands will fail as non-retriable.
 
 1. Auth failure
 - Check profile in `a1-spec.yaml` (`oci.profile`)
-- Verify `~/.oci/config` and matching private key path
+- Verify `./keys/oci/config` and matching private key path
 
 2. Capacity unavailable
 - Script treats this as retriable and keeps trying
