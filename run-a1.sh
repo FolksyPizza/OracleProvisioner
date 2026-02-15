@@ -199,7 +199,7 @@ cfg() {
 }
 
 oci_cmd() {
-  oci --profile "$OCI_PROFILE" --region "$OCI_REGION" "$@"
+  OCI_CLI_CONFIG_FILE="$OCI_CONFIG_FILE" oci --profile "$OCI_PROFILE" --region "$OCI_REGION" "$@"
 }
 
 json_get() {
@@ -208,7 +208,13 @@ json_get() {
 }
 
 load_config() {
+  local config_dir
+
   OCI_PROFILE="$(cfg '.oci.profile // "DEFAULT"')"
+  OCI_CONFIG_FILE="$(cfg '.oci.config_file // "./keys/oci/config"')"
+  OCI_CONFIG_FILE="${OCI_CONFIG_FILE/#\~/$HOME}"
+  config_dir="$(dirname "$OCI_CONFIG_FILE")"
+  mkdir -p "$config_dir"
   OCI_REGION="$(cfg '.oci.region')"
   COMPARTMENT_OCID="$(cfg '.oci.compartment_ocid')"
 
@@ -298,6 +304,7 @@ run_setup_wizard() {
     cat > ./a1-spec.yaml <<'EOF'
 oci:
   profile: DEFAULT
+  config_file: "./keys/oci/config"
   region: us-ashburn-1
   compartment_ocid: "ocid1.compartment.oc1..replace_me"
 
@@ -346,8 +353,12 @@ EOF
     log "INFO" "SETUP" "Found existing ./a1-spec.yaml, not replacing."
   fi
 
-  if [[ ! -f "$HOME/.oci/config" ]]; then
-    log "INFO" "SETUP" "No OCI config found. Launching: oci setup config"
+  OCI_CONFIG_FILE="$(yq -r '.oci.config_file // "./keys/oci/config"' ./a1-spec.yaml)"
+  OCI_CONFIG_FILE="${OCI_CONFIG_FILE/#\~/$HOME}"
+  mkdir -p "$(dirname "$OCI_CONFIG_FILE")"
+
+  if [[ ! -f "$OCI_CONFIG_FILE" ]]; then
+    log "INFO" "SETUP" "No OCI config found at $OCI_CONFIG_FILE. Launching: oci setup config"
     if [[ "$ASSUME_YES" -eq 1 ]]; then
       die "SETUP" "Cannot run interactive 'oci setup config' in --yes mode. Run without --yes."
     fi
@@ -355,26 +366,34 @@ EOF
 
 Before continuing, quick guide for the upcoming OCI prompts:
 1) "Enter a location for your config [...]"
-   - Press Enter to accept the default path.
+   - Type: ./keys/oci/config
 2) "Enter a user OCID"
    - Paste your user OCID from OCI Console -> Profile.
 3) "Enter a tenancy OCID"
    - Paste your tenancy OCID from OCI Console -> Tenancy details.
 4) "Enter a region"
    - Type: us-ashburn-1
-5) API key path prompts
-   - Press Enter to accept defaults unless you have a custom path.
+5) "Enter the full path to the private key"
+   - Recommended: ./keys/oci/oci_api_key.pem
+6) "Enter a passphrase..."
+   - Press Enter for no passphrase (simplest for automation).
 
 If you see a Python SyntaxWarning line from OCI CLI, it is usually non-fatal.
 Continue through the prompts unless the command exits with an actual ERROR.
 
 EOF
     oci setup config
+
+    if [[ ! -f "$OCI_CONFIG_FILE" && -f "$HOME/.oci/config" ]]; then
+      log "WARN" "SETUP" "Detected config at ~/.oci/config instead of $OCI_CONFIG_FILE. Copying into repo path."
+      mkdir -p "$(dirname "$OCI_CONFIG_FILE")"
+      cp "$HOME/.oci/config" "$OCI_CONFIG_FILE"
+    fi
   else
-    log "INFO" "SETUP" "Found existing OCI config at ~/.oci/config"
+    log "INFO" "SETUP" "Found existing OCI config at $OCI_CONFIG_FILE"
   fi
 
-  if [[ -f "$HOME/.oci/config" ]]; then
+  if [[ -f "$OCI_CONFIG_FILE" ]]; then
     log "INFO" "SETUP" "Next: upload your OCI API public key in the Console and set compartment_ocid in a1-spec.yaml."
     log "INFO" "SETUP" "Detailed guide: README.md and docs/API_KEY_SETUP.md"
   fi
@@ -385,7 +404,7 @@ EOF
 check_auth() {
   log "INFO" "AUTH_CHECK" "Validating OCI credentials and region."
   if ! oci_cmd iam region list >/dev/null 2>&1; then
-    die "AUTH_CHECK" "Unable to authenticate. Verify ~/.oci/config profile '$OCI_PROFILE'."
+    die "AUTH_CHECK" "Unable to authenticate. Verify config '$OCI_CONFIG_FILE' and profile '$OCI_PROFILE'."
   fi
   if ! oci_cmd iam compartment get --compartment-id "$COMPARTMENT_OCID" >/dev/null 2>&1; then
     die "AUTH_CHECK" "Cannot access compartment: $COMPARTMENT_OCID"
