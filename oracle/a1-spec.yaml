@@ -1,0 +1,44 @@
+oci:
+  profile: DEFAULT
+  region: us-ashburn-1
+  compartment_ocid: "ocid1.compartment.oc1..replace_me"
+
+instance:
+  shape: VM.Standard.A1.Flex
+  ocpus: 4
+  memory_gb: 24
+  boot_volume_gb: 160
+  display_name_prefix: "A1-Flex"
+  assign_public_ip: true
+  image:
+    mode: auto_latest_ubuntu_22_04
+    image_ocid: ""
+  ssh_public_key_path: "./keys/ampere_a1_key.pub"
+
+placement:
+  strategy: cycle_ads_same_region
+  availability_domains: []
+
+network:
+  mode: create_if_missing
+  vcn:
+    display_name: "ampere-vcn"
+    cidr_block: "10.10.0.0/16"
+  subnet:
+    display_name: "ampere-subnet"
+    cidr_block: "10.10.1.0/24"
+    prohibit_public_ip_on_vnic: false
+  internet_gateway_display_name: "ampere-igw"
+  route_table_display_name: "ampere-rt"
+  security_list_display_name: "ampere-sl"
+
+retry:
+  interval_seconds: 45
+  jitter_seconds: 15
+  infinite: true
+
+management:
+  enforce_single_active_instance: true
+  managed_by_tag_key: "ManagedBy"
+  managed_by_tag_value: "A1RetryScript"
+  cleanup_mode: conservative
