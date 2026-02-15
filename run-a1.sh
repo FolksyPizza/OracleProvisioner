@@ -74,6 +74,20 @@ Install dependencies:
 EOF
 }
 
+print_brew_permission_fix() {
+  cat <<'EOF' | tee -a "$LOG_FILE"
+Homebrew permission issue detected.
+Run these commands, then rerun setup:
+
+  sudo chown -R "$USER" /opt/homebrew
+  chmod -R u+rwX /opt/homebrew
+  git config --global --add safe.directory /opt/homebrew
+
+  brew doctor
+  brew install oci-cli yq
+EOF
+}
+
 maybe_install_deps() {
   local missing=("$@")
   log "ERROR" "DEPENDENCY_MISSING" "Missing dependency(s): ${missing[*]}"
@@ -87,7 +101,20 @@ maybe_install_deps() {
   case "$answer" in
     [yY]|[yY][eE][sS])
       if [[ "$(uname -s)" == "Darwin" && -x "$(command -v brew)" ]]; then
-        brew install oci-cli jq yq || die "AUTO_INSTALL_FAILED" "Automatic dependency install failed."
+        local brew_out_file
+        brew_out_file="$TMP_DIR/brew_install.log"
+        set +e
+        brew install oci-cli jq yq >"$brew_out_file" 2>&1
+        local brew_rc=$?
+        set -e
+        if [[ $brew_rc -ne 0 ]]; then
+          cat "$brew_out_file" | tee -a "$LOG_FILE"
+          if grep -qiE 'not writable by your user|permission denied|Operation not permitted|Command failed with exit 128: git|fatal: not in a git directory' "$brew_out_file"; then
+            print_brew_permission_fix
+            die "AUTO_INSTALL_FAILED" "Automatic dependency install failed due to local Homebrew permissions."
+          fi
+          die "AUTO_INSTALL_FAILED" "Automatic dependency install failed."
+        fi
       else
         die "AUTO_INSTALL_UNSUPPORTED" "Automatic install only supported for macOS + Homebrew in this script."
       fi
@@ -324,6 +351,24 @@ EOF
     if [[ "$ASSUME_YES" -eq 1 ]]; then
       die "SETUP" "Cannot run interactive 'oci setup config' in --yes mode. Run without --yes."
     fi
+    cat <<'EOF' | tee -a "$LOG_FILE"
+
+Before continuing, quick guide for the upcoming OCI prompts:
+1) "Enter a location for your config [...]"
+   - Press Enter to accept the default path.
+2) "Enter a user OCID"
+   - Paste your user OCID from OCI Console -> Profile.
+3) "Enter a tenancy OCID"
+   - Paste your tenancy OCID from OCI Console -> Tenancy details.
+4) "Enter a region"
+   - Type: us-ashburn-1
+5) API key path prompts
+   - Press Enter to accept defaults unless you have a custom path.
+
+If you see a Python SyntaxWarning line from OCI CLI, it is usually non-fatal.
+Continue through the prompts unless the command exits with an actual ERROR.
+
+EOF
     oci setup config
   else
     log "INFO" "SETUP" "Found existing OCI config at ~/.oci/config"

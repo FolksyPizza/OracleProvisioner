@@ -16,6 +16,15 @@ The CLI prompts for:
 - Region (use `us-ashburn-1` for your case)
 - API key file path
 
+Prompt-by-prompt quick answers:
+- `Enter a location for your config [...]` -> press Enter
+- `Enter a user OCID` -> paste user OCID from OCI Console profile
+- `Enter a tenancy OCID` -> paste tenancy OCID from OCI Console tenancy page
+- `Enter a region` -> `us-ashburn-1`
+- API key path prompts -> press Enter to accept defaults
+
+If a Python `SyntaxWarning` appears, it is commonly non-fatal; continue unless the command exits with an explicit error.
+
 It creates:
 - `~/.oci/config`
 - API signing key pair (private key + public key)
