@@ -54,11 +54,12 @@ chmod +x run-a1.sh
 ```
 
 When `oci setup config` starts, use this:
-- `Enter a location for your config [...]` -> press Enter
+- `Enter a location for your config [...]` -> `./keys/oci/config`
 - `Enter a user OCID` -> paste from OCI Console profile
 - `Enter a tenancy OCID` -> paste from Tenancy details
 - `Enter a region` -> `us-ashburn-1`
-- API key path prompts -> press Enter for defaults
+- `Enter the full path to the private key` -> `./keys/oci/oci_api_key.pem`
+- passphrase prompt -> press Enter for no passphrase
 
 If you see a Python `SyntaxWarning`, continue unless an actual `ERROR` follows.
 
@@ -66,6 +67,7 @@ If you see a Python `SyntaxWarning`, continue unless an actual `ERROR` follows.
 
 ```yaml
 oci:
+  config_file: "./keys/oci/config"
   compartment_ocid: "ocid1.compartment.oc1..REPLACE_ME"
 ```
 
@@ -106,6 +108,10 @@ Examples:
 
 For full OCI API key onboarding and profile configuration:
 - [`docs/API_KEY_SETUP.md`](docs/API_KEY_SETUP.md)
+
+Important:
+- A Git SSH key (used for cloning/pushing GitHub repos) is not the same as an OCI API signing key.
+- This project uses OCI API signing keys configured in `./keys/oci/config` by default.
 
 ## Logging
 
