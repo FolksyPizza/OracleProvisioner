@@ -65,12 +65,15 @@ Install dependencies:
   macOS (Homebrew):
     brew install oci-cli jq yq
   Ubuntu/Debian:
-    sudo apt-get update
-    sudo apt-get install -y jq
-    # OCI CLI:
-    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
-    # yq:
-    sudo snap install yq
+    sudo apt-get update && sudo apt-get install -y jq yq python3 curl
+  RHEL/Fedora:
+    sudo dnf install -y jq yq python3 curl
+  Arch:
+    sudo pacman -Sy --noconfirm jq yq python curl
+  Alpine:
+    sudo apk add --no-cache jq yq python3 curl
+  OCI CLI (all Linux/macOS fallback):
+    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults
 EOF
 }
 
@@ -86,6 +89,112 @@ Run these commands, then rerun setup:
   brew doctor
   brew install oci-cli yq
 EOF
+}
+
+run_as_root() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+  if require_cmd sudo; then
+    sudo "$@"
+    return $?
+  fi
+  return 127
+}
+
+linux_pkg_manager() {
+  if require_cmd apt-get; then echo apt; return; fi
+  if require_cmd dnf; then echo dnf; return; fi
+  if require_cmd yum; then echo yum; return; fi
+  if require_cmd pacman; then echo pacman; return; fi
+  if require_cmd zypper; then echo zypper; return; fi
+  if require_cmd apk; then echo apk; return; fi
+  echo ""
+}
+
+install_yq_linux_fallback() {
+  local arch os url tmp target
+  arch="$(uname -m)"
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) return 1 ;;
+  esac
+  url="https://github.com/mikefarah/yq/releases/latest/download/yq_${os}_${arch}"
+  tmp="$TMP_DIR/yq"
+  if ! require_cmd curl; then
+    return 1
+  fi
+  set +e
+  curl -fsSL "$url" -o "$tmp"
+  local rc=$?
+  set -e
+  [[ $rc -eq 0 ]] || return 1
+  chmod +x "$tmp"
+  if run_as_root mv "$tmp" /usr/local/bin/yq; then
+    return 0
+  fi
+  target="$HOME/.local/bin"
+  mkdir -p "$target"
+  mv "$tmp" "$target/yq"
+  export PATH="$target:$PATH"
+  return 0
+}
+
+auto_install_linux_deps() {
+  local mgr
+  mgr="$(linux_pkg_manager)"
+  [[ -n "$mgr" ]] || die "AUTO_INSTALL_UNSUPPORTED" "No supported Linux package manager found."
+
+  log "INFO" "AUTO_INSTALL" "Detected Linux package manager: $mgr"
+  case "$mgr" in
+    apt)
+      run_as_root apt-get update || die "AUTO_INSTALL_FAILED" "apt-get update failed."
+      run_as_root apt-get install -y jq python3 curl openssh-client ca-certificates || die "AUTO_INSTALL_FAILED" "apt install failed."
+      run_as_root apt-get install -y yq || true
+      run_as_root apt-get install -y oci-cli || true
+      ;;
+    dnf)
+      run_as_root dnf install -y jq python3 curl openssh-clients ca-certificates || die "AUTO_INSTALL_FAILED" "dnf install failed."
+      run_as_root dnf install -y yq || true
+      run_as_root dnf install -y oci-cli || true
+      ;;
+    yum)
+      run_as_root yum install -y jq python3 curl openssh-clients ca-certificates || die "AUTO_INSTALL_FAILED" "yum install failed."
+      run_as_root yum install -y yq || true
+      run_as_root yum install -y oci-cli || true
+      ;;
+    pacman)
+      run_as_root pacman -Sy --noconfirm jq python curl openssh ca-certificates || die "AUTO_INSTALL_FAILED" "pacman install failed."
+      run_as_root pacman -Sy --noconfirm yq || true
+      ;;
+    zypper)
+      run_as_root zypper --non-interactive refresh || true
+      run_as_root zypper --non-interactive install jq python3 curl openssh ca-certificates || die "AUTO_INSTALL_FAILED" "zypper install failed."
+      run_as_root zypper --non-interactive install yq || true
+      ;;
+    apk)
+      run_as_root apk add --no-cache jq python3 curl openssh-client ca-certificates || die "AUTO_INSTALL_FAILED" "apk install failed."
+      run_as_root apk add --no-cache yq || true
+      ;;
+  esac
+
+  if ! require_cmd yq; then
+    install_yq_linux_fallback || die "AUTO_INSTALL_FAILED" "Could not install yq automatically."
+  fi
+
+  if ! require_cmd oci; then
+    if ! require_cmd curl; then
+      die "AUTO_INSTALL_FAILED" "curl is required for OCI CLI installer."
+    fi
+    set +e
+    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults >/dev/null 2>&1
+    local oci_rc=$?
+    set -e
+    [[ $oci_rc -eq 0 ]] || die "AUTO_INSTALL_FAILED" "OCI CLI installer failed."
+  fi
 }
 
 maybe_install_deps() {
@@ -115,8 +224,10 @@ maybe_install_deps() {
           fi
           die "AUTO_INSTALL_FAILED" "Automatic dependency install failed."
         fi
+      elif [[ "$(uname -s)" == "Linux" ]]; then
+        auto_install_linux_deps
       else
-        die "AUTO_INSTALL_UNSUPPORTED" "Automatic install only supported for macOS + Homebrew in this script."
+        die "AUTO_INSTALL_UNSUPPORTED" "Automatic install is supported on macOS (Homebrew) and common Linux package managers."
       fi
       ;;
     *)

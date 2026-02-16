@@ -39,6 +39,24 @@ Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logi
 - `ssh-keygen`
 - OCI account with permissions for compute and networking in target compartment
 
+## Dependency Installation
+
+`./run.sh --setup` checks dependencies and can auto-install missing packages when you approve the prompt.
+
+Supported auto-install paths:
+- macOS: Homebrew
+- Linux: `apt`, `dnf`, `yum`, `pacman`, `zypper`, `apk`
+
+On Linux, the script attempts to install:
+- `jq`
+- `yq`
+- `oci` CLI
+- helper packages such as `python3`, `curl`, CA certs, and SSH client tools
+
+If package-manager installs do not provide `yq` or `oci`, the script falls back to:
+- direct `yq` binary install
+- official OCI CLI install script
+
 ## Quick Start
 
 1. From the repository root, make the script executable:
