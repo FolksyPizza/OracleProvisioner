@@ -22,18 +22,17 @@ timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-print_splash() {
-  cat <<'EOF'
-ASCII:
-  /$$$$$$                               /$$           /$$$$$$$                                /$$           /$$                                        
- /$$__  $$                             | $$          | $$__  $$                              |__/          |__/                                        
-| $$  \ $$  /$$$$$$  /$$$$$$   /$$$$$$$| $$  /$$$$$$ | $$  \ $$ /$$$$$$   /$$$$$$  /$$    /$$ /$$  /$$$$$$$ /$$  /$$$$$$  /$$$$$$$   /$$$$$$   /$$$$$$ 
-| $$  | $$ /$$__  $$|____  $$ /$$_____/| $$ /$$__  $$| $$$$$$$//$$__  $$ /$$__  $$|  $$  /$$/| $$ /$$_____/| $$ /$$__  $$| $$__  $$ /$$__  $$ /$$__  $$
-| $$  | $$| $$  \__/ /$$$$$$$| $$      | $$| $$$$$$$$| $$____/| $$  \__/| $$  \ $$ \  $$/$$/ | $$|  $$$$$$ | $$| $$  \ $$| $$  \ $$| $$$$$$$$| $$  \__/
-| $$  | $$| $$      /$$__  $$| $$      | $$| $$_____/| $$     | $$      | $$  | $$  \  $$$/  | $$ \____  $$| $$| $$  | $$| $$  | $$| $$_____/| $$      
-|  $$$$$$/| $$     |  $$$$$$$|  $$$$$$$| $$|  $$$$$$$| $$     | $$      |  $$$$$$/   \  $/   | $$ /$$$$$$$/| $$|  $$$$$$/| $$  | $$|  $$$$$$$| $$      
- \______/ |__/      \_______/ \_______/|__/ \_______/|__/     |__/       \______/     \_/    |__/|_______/ |__/ \______/ |__/  |__/ \_______/|__/      
-EOF
+startup_sequence() {
+  log "INFO" "BOOT" "Initializing runtime..."
+  sleep 0.4
+  log "INFO" "BOOT" "Loading configuration..."
+  sleep 0.4
+  if [[ "$MODE" == "setup" ]]; then
+    log "INFO" "BOOT" "Setup mode selected."
+  else
+    log "INFO" "BOOT" "Provision mode selected."
+  fi
+  sleep 0.2
 }
 
 log() {
@@ -90,6 +89,8 @@ install_instructions() {
   cat <<'EOF'
 Install dependencies:
   macOS (Homebrew):
+    brew install oci-cli jq yq
+  Linux (Homebrew, if installed):
     brew install oci-cli jq yq
   Ubuntu/Debian:
     sudo apt-get update && sudo apt-get install -y jq yq python3 curl
@@ -172,39 +173,74 @@ install_yq_linux_fallback() {
 
 auto_install_linux_deps() {
   local mgr
+  local pkg_log
+  local brew_ok=0
   mgr="$(linux_pkg_manager)"
   [[ -n "$mgr" ]] || die "AUTO_INSTALL_UNSUPPORTED" "No supported Linux package manager found."
+  pkg_log="$TMP_DIR/pkg_install.log"
+  : >"$pkg_log"
 
   log "INFO" "AUTO_INSTALL" "Detected Linux package manager: $mgr"
+  log "INFO" "AUTO_INSTALL" "Installing dependencies (quiet mode)..."
+
+  quiet_exec() {
+    set +e
+    "$@" >>"$pkg_log" 2>&1
+    local rc=$?
+    set -e
+    return $rc
+  }
+
+  fail_with_pkg_log() {
+    log "ERROR" "AUTO_INSTALL_FAILED" "Dependency install failed. Last lines:"
+    tail -n 40 "$pkg_log" | tee -a "$LOG_FILE"
+    die "AUTO_INSTALL_FAILED" "Automatic dependency install failed."
+  }
+
+  # Prefer Homebrew on Linux if available.
+  if require_cmd brew; then
+    log "INFO" "AUTO_INSTALL" "Homebrew detected on Linux, trying brew first."
+    if quiet_exec brew install jq yq oci-cli; then
+      brew_ok=1
+    else
+      log "WARN" "AUTO_INSTALL" "Homebrew install failed; falling back to OS package manager."
+    fi
+  fi
+
+  if [[ "$brew_ok" -eq 1 ]]; then
+    return 0
+  fi
+
   case "$mgr" in
     apt)
-      run_as_root apt-get update || die "AUTO_INSTALL_FAILED" "apt-get update failed."
-      run_as_root apt-get install -y jq python3 curl openssh-client ca-certificates || die "AUTO_INSTALL_FAILED" "apt install failed."
-      run_as_root apt-get install -y yq || true
-      run_as_root apt-get install -y oci-cli || true
+      quiet_exec run_as_root apt-get -o Acquire::Retries=3 update || log "WARN" "AUTO_INSTALL" "apt-get update had warnings; continuing."
+      quiet_exec run_as_root apt-get install -y jq python3 curl openssh-client ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root apt-get install -y python3-pip || true
+      quiet_exec run_as_root apt-get install -y yq || true
+      quiet_exec run_as_root apt-get install -y oci-cli || true
       ;;
     dnf)
-      run_as_root dnf install -y jq python3 curl openssh-clients ca-certificates || die "AUTO_INSTALL_FAILED" "dnf install failed."
-      run_as_root dnf install -y yq || true
-      run_as_root dnf install -y oci-cli || true
+      quiet_exec run_as_root dnf install -y jq python3 curl openssh-clients ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root dnf install -y yq || true
+      quiet_exec run_as_root dnf install -y oci-cli || true
       ;;
     yum)
-      run_as_root yum install -y jq python3 curl openssh-clients ca-certificates || die "AUTO_INSTALL_FAILED" "yum install failed."
-      run_as_root yum install -y yq || true
-      run_as_root yum install -y oci-cli || true
+      quiet_exec run_as_root yum install -y jq python3 curl openssh-clients ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root yum install -y yq || true
+      quiet_exec run_as_root yum install -y oci-cli || true
       ;;
     pacman)
-      run_as_root pacman -Sy --noconfirm jq python curl openssh ca-certificates || die "AUTO_INSTALL_FAILED" "pacman install failed."
-      run_as_root pacman -Sy --noconfirm yq || true
+      quiet_exec run_as_root pacman -Sy --noconfirm jq python curl openssh ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root pacman -Sy --noconfirm yq || true
       ;;
     zypper)
-      run_as_root zypper --non-interactive refresh || true
-      run_as_root zypper --non-interactive install jq python3 curl openssh ca-certificates || die "AUTO_INSTALL_FAILED" "zypper install failed."
-      run_as_root zypper --non-interactive install yq || true
+      quiet_exec run_as_root zypper --non-interactive refresh || true
+      quiet_exec run_as_root zypper --non-interactive install jq python3 curl openssh ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root zypper --non-interactive install yq || true
       ;;
     apk)
-      run_as_root apk add --no-cache jq python3 curl openssh-client ca-certificates || die "AUTO_INSTALL_FAILED" "apk install failed."
-      run_as_root apk add --no-cache yq || true
+      quiet_exec run_as_root apk add --no-cache jq python3 curl openssh-client ca-certificates || fail_with_pkg_log
+      quiet_exec run_as_root apk add --no-cache yq || true
       ;;
   esac
 
@@ -217,10 +253,22 @@ auto_install_linux_deps() {
       die "AUTO_INSTALL_FAILED" "curl is required for OCI CLI installer."
     fi
     set +e
-    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults >/dev/null 2>&1
+    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- \
+      --accept-all-defaults \
+      --install-dir "$HOME/lib/oracle-cli" \
+      --exec-dir "$HOME/.local/bin" >/dev/null 2>&1
     local oci_rc=$?
     set -e
-    [[ $oci_rc -eq 0 ]] || die "AUTO_INSTALL_FAILED" "OCI CLI installer failed."
+    if [[ $oci_rc -ne 0 ]]; then
+      if require_cmd python3 && python3 -m pip --version >/dev/null 2>&1; then
+        set +e
+        python3 -m pip install --user --upgrade oci-cli >/dev/null 2>&1
+        oci_rc=$?
+        set -e
+      fi
+    fi
+    export PATH="$HOME/.local/bin:$PATH"
+    require_cmd oci || die "AUTO_INSTALL_FAILED" "OCI CLI installer failed."
   fi
 }
 
@@ -877,12 +925,7 @@ main() {
   parse_args "$@"
   : >"$LOG_FILE"
 
-  if [[ -t 1 ]]; then
-    printf "\033[1;35m"
-    print_splash
-    printf "\033[0m\n"
-  fi
-
+  startup_sequence
   log "INFO" "START" "Starting $SCRIPT_NAME with config=$CONFIG_FILE"
 
   if [[ "$MODE" == "setup" ]]; then
