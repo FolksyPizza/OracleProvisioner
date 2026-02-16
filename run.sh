@@ -18,12 +18,6 @@ on_interrupt() {
   exit 2
 }
 
-on_error() {
-  local rc=$?
-  log "ERROR" "UNEXPECTED_EXIT" "Unexpected failure at line $1 (exit=$rc)."
-  exit "$rc"
-}
-
 timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -740,7 +734,6 @@ retry_loop() {
 main() {
   trap cleanup EXIT
   trap on_interrupt INT TERM
-  trap 'on_error $LINENO' ERR
   TMP_DIR="$(mktemp -d)"
 
   parse_args "$@"
