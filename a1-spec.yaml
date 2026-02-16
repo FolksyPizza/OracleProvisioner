@@ -2,7 +2,7 @@ oci:
   profile: DEFAULT
   config_file: "./keys/oci/config"
   region: us-ashburn-1
-  compartment_ocid: "ocid1.compartment.oc1..replace_me"
+  compartment_ocid: "<your-compartment-ocid>"
 
 instance:
   shape: VM.Standard.A1.Flex

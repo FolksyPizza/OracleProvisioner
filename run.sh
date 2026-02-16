@@ -18,6 +18,12 @@ on_interrupt() {
   exit 2
 }
 
+on_error() {
+  local rc=$?
+  log "ERROR" "UNEXPECTED_EXIT" "Unexpected failure at line $1 (exit=$rc)."
+  exit "$rc"
+}
+
 timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -135,6 +141,9 @@ retryable_error() {
   [[ "$lc" == *"too many requests"* ]] && return 0
   [[ "$lc" == *"service unavailable"* ]] && return 0
   [[ "$lc" == *"timeout"* ]] && return 0
+  [[ "$lc" == *"timed out"* ]] && return 0
+  [[ "$lc" == *"connection to endpoint timed out"* ]] && return 0
+  [[ "$lc" == *"requestexception"* && "$lc" == *"timed out"* ]] && return 0
   [[ "$lc" == *"internal error"* ]] && return 0
   return 1
 }
@@ -199,7 +208,15 @@ cfg() {
 }
 
 oci_cmd() {
-  OCI_CLI_CONFIG_FILE="$OCI_CONFIG_FILE" oci --profile "$OCI_PROFILE" --region "$OCI_REGION" "$@"
+  local ca_bundle="${REQUESTS_CA_BUNDLE:-}"
+  if [[ -z "$ca_bundle" && -f "/etc/ssl/cert.pem" ]]; then
+    ca_bundle="/etc/ssl/cert.pem"
+  fi
+  if [[ -n "$ca_bundle" ]]; then
+    REQUESTS_CA_BUNDLE="$ca_bundle" OCI_CLI_CONFIG_FILE="$OCI_CONFIG_FILE" oci --profile "$OCI_PROFILE" --region "$OCI_REGION" "$@"
+  else
+    OCI_CLI_CONFIG_FILE="$OCI_CONFIG_FILE" oci --profile "$OCI_PROFILE" --region "$OCI_REGION" "$@"
+  fi
 }
 
 json_get() {
@@ -252,6 +269,15 @@ load_config() {
   fi
   if [[ -n "${OVERRIDE_JITTER:-}" ]]; then
     RETRY_JITTER="$OVERRIDE_JITTER"
+  fi
+
+  if ! [[ "$RETRY_INTERVAL" =~ ^[0-9]+$ ]]; then
+    log "WARN" "CONFIG" "retry.interval_seconds must be integer. Falling back to 45."
+    RETRY_INTERVAL=45
+  fi
+  if ! [[ "$RETRY_JITTER" =~ ^[0-9]+$ ]]; then
+    log "WARN" "CONFIG" "retry.jitter_seconds must be integer. Falling back to 15."
+    RETRY_JITTER=15
   fi
 
   [[ -n "$OCI_REGION" ]] || die "CONFIG" ".oci.region is required."
@@ -511,10 +537,15 @@ ensure_network() {
 resolve_ads() {
   local configured_json
   configured_json="$(yq -o=json '.placement.availability_domains // []' "$CONFIG_FILE")"
+  ADS=()
   if [[ "$(echo "$configured_json" | jq 'length')" -gt 0 ]]; then
-    mapfile -t ADS < <(echo "$configured_json" | jq -r '.[]')
+    while IFS= read -r ad; do
+      [[ -n "$ad" ]] && ADS+=("$ad")
+    done < <(echo "$configured_json" | jq -r '.[]')
   else
-    mapfile -t ADS < <(oci_cmd iam availability-domain list --compartment-id "$COMPARTMENT_OCID" | jq -r '.data[].name')
+    while IFS= read -r ad; do
+      [[ -n "$ad" ]] && ADS+=("$ad")
+    done < <(oci_cmd iam availability-domain list --compartment-id "$COMPARTMENT_OCID" | jq -r '.data[].name')
   fi
   [[ "${#ADS[@]}" -gt 0 ]] || die "PLACEMENT" "No availability domains found."
 }
@@ -566,7 +597,9 @@ launch_once() {
   local launch_err_file="$TMP_DIR/launch_err.json"
   local launch_out_file="$TMP_DIR/launch_out.json"
   local ssh_key
+  local had_errexit=0
   ssh_key="$(cat "$SSH_KEY_PATH")"
+  [[ $- == *e* ]] && had_errexit=1
 
   set +e
   oci_cmd compute instance launch \
@@ -583,7 +616,9 @@ launch_once() {
     --freeform-tags "{\"$MANAGED_TAG_KEY\":\"$MANAGED_TAG_VALUE\"}" \
     >"$launch_out_file" 2>"$launch_err_file"
   local rc=$?
-  set -e
+  if [[ $had_errexit -eq 1 ]]; then
+    set -e
+  fi
 
   if [[ $rc -eq 0 ]]; then
     local instance_id
@@ -624,7 +659,10 @@ print_success_instance_info() {
   local private_ip public_ip
   private_ip=""
   public_ip=""
-  mapfile -t _VNIC_IDS < <(oci_cmd compute instance list-vnics --instance-id "$instance_id" | jq -r '.data[].id')
+  _VNIC_IDS=()
+  while IFS= read -r vnic_id; do
+    [[ -n "$vnic_id" ]] && _VNIC_IDS+=("$vnic_id")
+  done < <(oci_cmd compute instance list-vnics --instance-id "$instance_id" | jq -r '.data[].id')
   if [[ "${#_VNIC_IDS[@]}" -gt 0 ]]; then
     local vnic
     vnic="$(oci_cmd network vnic get --vnic-id "${_VNIC_IDS[0]}")"
@@ -642,8 +680,15 @@ retry_loop() {
   while true; do
     if [[ "$ENFORCE_SINGLE_ACTIVE" == "true" ]]; then
       local active
-      active="$(count_active_managed_instances)"
-      if [[ "$active" -ge 1 ]]; then
+      set +e
+      active="$(count_active_managed_instances 2>/dev/null)"
+      local active_rc=$?
+      set -e
+      if [[ $active_rc -ne 0 || -z "$active" ]]; then
+        log "WARN" "ACTIVE_CHECK_FAILED" "Could not check active instances; continuing retry loop."
+        active=0
+      fi
+      if [[ "$active" =~ ^[0-9]+$ ]] && [[ "$active" -ge 1 ]]; then
         log "INFO" "ALREADY_ACTIVE" "Found $active active managed instance(s); exiting successfully."
         print_success_instance_info
         return 0
@@ -652,7 +697,14 @@ retry_loop() {
 
     local ad="${ADS[$ad_index]}"
     local display_name
-    display_name="$(next_display_name)"
+    set +e
+    display_name="$(next_display_name 2>/dev/null)"
+    local name_rc=$?
+    set -e
+    if [[ $name_rc -ne 0 || -z "$display_name" ]]; then
+      log "WARN" "NAME_GEN_FAILED" "Could not compute next display name, using timestamp fallback."
+      display_name="${DISPLAY_PREFIX}-$(date +%s)"
+    fi
     attempts=$((attempts + 1))
     log "INFO" "LAUNCH_ATTEMPT" "Attempt=$attempts AD=$ad Name=$display_name Shape=$SHAPE OCPU=$OCPUS RAM_GB=$MEMORY_GB BootGB=$BOOT_VOLUME_GB"
 
@@ -661,13 +713,18 @@ retry_loop() {
     local launch_rc=$?
     set -e
 
-    if [[ $launch_rc -eq 0 ]]; then
-      print_success_instance_info
-      return 0
-    fi
-    if [[ $launch_rc -eq 11 ]]; then
-      return 1
-    fi
+    case "$launch_rc" in
+      0)
+        print_success_instance_info
+        return 0
+        ;;
+      11)
+        return 1
+        ;;
+      *)
+        # Retry path for capacity/transient responses.
+        ;;
+    esac
 
     ad_index=$(((ad_index + 1) % ${#ADS[@]}))
     local jitter=0
@@ -683,6 +740,7 @@ retry_loop() {
 main() {
   trap cleanup EXIT
   trap on_interrupt INT TERM
+  trap 'on_error $LINENO' ERR
   TMP_DIR="$(mktemp -d)"
 
   parse_args "$@"
