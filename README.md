@@ -2,7 +2,7 @@
 
 Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logic for limited-capacity scenarios.
 
-`run-a1.sh` continuously attempts provisioning until capacity is available, while reusing network resources and stopping after one managed active instance is found.
+`run.sh` continuously attempts provisioning until capacity is available, while reusing network resources and stopping after one managed active instance is found.
 
 ## Documentation
 
@@ -14,7 +14,7 @@ Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logi
 
 ## Features
 
-- Single entrypoint script: `run-a1.sh`
+- Single entrypoint script: `run.sh`
 - Setup mode for first-time environments: `--setup`
 - Retry loop with configurable interval and jitter
 - Availability Domain cycling in-region
@@ -25,7 +25,7 @@ Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logi
 
 ## Repository Layout
 
-- [`run-a1.sh`](run-a1.sh): main script
+- [`run.sh`](run.sh): main script
 - [`a1-spec.yaml`](a1-spec.yaml): configuration file
 - [`docs/API_KEY_SETUP.md`](docs/API_KEY_SETUP.md): OCI API key setup guide
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md): operations, troubleshooting, and cleanup
@@ -44,13 +44,13 @@ Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logi
 1. From the repository root, make the script executable:
 
 ```bash
-chmod +x run-a1.sh
+chmod +x run.sh
 ```
 
 2. Run setup:
 
 ```bash
-./run-a1.sh --setup
+./run.sh --setup
 ```
 
 When `oci setup config` starts, use:
@@ -86,8 +86,23 @@ OCI_CLI_CONFIG_FILE=./keys/oci/config oci --profile <profile-name> iam region li
 6. Start provisioning:
 
 ```bash
-./run-a1.sh --config a1-spec.yaml
+./run.sh --config a1-spec.yaml
 ```
+
+## Key File Permissions
+
+Run these from the repository root:
+
+```bash
+chmod 700 keys keys/oci
+chmod 600 keys/ampere_a1_key keys/oci/oci_api_key.pem
+chmod 644 keys/ampere_a1_key.pub keys/oci/oci_api_key_public.pem
+```
+
+Expected state:
+- private keys (`*.pem`, no `.pub`) -> `600`
+- public keys (`*.pub`, `*_public.pem`) -> `644`
+- key directories -> `700`
 
 ## Configuration
 
@@ -110,15 +125,15 @@ SSH keys are stored at:
 ## CLI Usage
 
 ```bash
-./run-a1.sh --setup [--yes]
-./run-a1.sh --config a1-spec.yaml [--interval 45] [--jitter 15] [--log-file ./a1-provision.log] [--yes]
+./run.sh --setup [--yes]
+./run.sh --config a1-spec.yaml [--interval 45] [--jitter 15] [--log-file ./a1-provision.log] [--yes]
 ```
 
 Examples:
 
 ```bash
-./run-a1.sh --config a1-spec.yaml --interval 60 --jitter 10
-./run-a1.sh --config a1-spec.yaml --log-file ./a1-provision.log
+./run.sh --config a1-spec.yaml --interval 60 --jitter 10
+./run.sh --config a1-spec.yaml --log-file ./a1-provision.log
 ```
 
 ## Setup and Auth

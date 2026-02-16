@@ -1,6 +1,6 @@
 # OCI API Key Setup (Beginner Guide)
 
-This guide prepares authentication for `run-a1.sh`.
+This guide prepares authentication for `run.sh`.
 
 ## 1. Create local OCI CLI config
 
