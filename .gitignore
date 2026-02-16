@@ -2,3 +2,5 @@
 *.log
 *.out
 keys/
+a1-spec.local.yaml
+.runsh.pid
