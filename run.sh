@@ -6,6 +6,13 @@ LOG_FILE="./a1-provision.log"
 CONFIG_FILE=""
 ASSUME_YES=0
 MODE="run"
+RUNTIME_INTERACTIVE=0
+RUNTIME_PAUSED=0
+RUNTIME_ATTEMPTS=0
+RUNTIME_LAST_AD="n/a"
+RUNTIME_LAST_NAME="n/a"
+RUNTIME_LAST_RESULT="n/a"
+RUNTIME_START_EPOCH=0
 
 cleanup() {
   if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
@@ -31,6 +38,9 @@ startup_sequence() {
     log "INFO" "BOOT" "Setup mode selected."
   else
     log "INFO" "BOOT" "Provision mode selected."
+  fi
+  if [[ "$MODE" == "run" && "$RUNTIME_INTERACTIVE" -eq 1 ]]; then
+    runtime_print_help
   fi
   sleep 0.2
 }
@@ -62,6 +72,79 @@ die() {
   local msg="$2"
   log "ERROR" "$event" "$msg"
   exit 1
+}
+
+runtime_uptime() {
+  local now elapsed h m s
+  now="$(date +%s)"
+  elapsed=$((now - RUNTIME_START_EPOCH))
+  h=$((elapsed / 3600))
+  m=$(((elapsed % 3600) / 60))
+  s=$((elapsed % 60))
+  printf "%02dh:%02dm:%02ds" "$h" "$m" "$s"
+}
+
+runtime_print_help() {
+  [[ "$RUNTIME_INTERACTIVE" -eq 1 ]] || return 0
+  log "INFO" "RUNTIME_HELP" "Keys: a=attempts s=status p=pause/resume h=help q=quit"
+}
+
+runtime_print_status() {
+  local uptime
+  uptime="$(runtime_uptime)"
+  log "INFO" "RUNTIME_STATUS" "uptime=$uptime attempts=$RUNTIME_ATTEMPTS last_ad=$RUNTIME_LAST_AD last_name=$RUNTIME_LAST_NAME last_result=$RUNTIME_LAST_RESULT paused=$RUNTIME_PAUSED"
+}
+
+runtime_poll_input() {
+  [[ "$RUNTIME_INTERACTIVE" -eq 1 ]] || return 0
+  local key
+  while true; do
+    if ! read -r -s -n1 -t 0.05 key; then
+      break
+    fi
+    case "$key" in
+      a|A)
+        log "INFO" "RUNTIME_ATTEMPTS" "attempts=$RUNTIME_ATTEMPTS last_result=$RUNTIME_LAST_RESULT"
+        ;;
+      s|S)
+        runtime_print_status
+        ;;
+      p|P)
+        if [[ "$RUNTIME_PAUSED" -eq 0 ]]; then
+          RUNTIME_PAUSED=1
+          log "WARN" "RUNTIME_PAUSED" "Retry loop paused by user. Press 'p' again to resume."
+        else
+          RUNTIME_PAUSED=0
+          log "INFO" "RUNTIME_RESUMED" "Retry loop resumed."
+        fi
+        ;;
+      h|H|\?)
+        runtime_print_help
+        ;;
+      q|Q)
+        log "WARN" "RUNTIME_QUIT" "User requested quit."
+        exit 0
+        ;;
+      $'\n'|$'\r')
+        ;;
+      *)
+        log "INFO" "RUNTIME_KEY" "Unknown key '$key'. Press 'h' for help."
+        ;;
+    esac
+  done
+}
+
+wait_with_controls() {
+  local remaining="$1"
+  while [[ "$remaining" -gt 0 ]]; do
+    runtime_poll_input
+    if [[ "$RUNTIME_PAUSED" -eq 1 ]]; then
+      sleep 1
+      continue
+    fi
+    sleep 1
+    remaining=$((remaining - 1))
+  done
 }
 
 usage() {
@@ -991,6 +1074,10 @@ retry_loop() {
       display_name="${DISPLAY_PREFIX}-$(date +%s)"
     fi
     attempts=$((attempts + 1))
+    RUNTIME_ATTEMPTS="$attempts"
+    RUNTIME_LAST_AD="$ad"
+    RUNTIME_LAST_NAME="$display_name"
+    RUNTIME_LAST_RESULT="launching"
     log "INFO" "LAUNCH_ATTEMPT" "Attempt=$attempts AD=$ad Name=$display_name Shape=$SHAPE OCPU=$OCPUS RAM_GB=$MEMORY_GB BootGB=$BOOT_VOLUME_GB"
 
     set +e
@@ -1000,13 +1087,16 @@ retry_loop() {
 
     case "$launch_rc" in
       0)
+        RUNTIME_LAST_RESULT="success"
         print_success_instance_info
         return 0
         ;;
       11)
+        RUNTIME_LAST_RESULT="fatal_error"
         return 1
         ;;
       *)
+        RUNTIME_LAST_RESULT="retryable_error"
         # Retry path for capacity/transient responses.
         ;;
     esac
@@ -1023,7 +1113,7 @@ retry_loop() {
     fi
     local sleep_for=$((ACTIVE_RETRY_INTERVAL + jitter))
     log "INFO" "RETRY_SLEEP" "Sleeping ${sleep_for}s before next attempt."
-    sleep "$sleep_for"
+    wait_with_controls "$sleep_for"
   done
 }
 
@@ -1031,9 +1121,13 @@ main() {
   trap cleanup EXIT
   trap on_interrupt INT TERM
   TMP_DIR="$(mktemp -d)"
+  RUNTIME_START_EPOCH="$(date +%s)"
 
   parse_args "$@"
   : >"$LOG_FILE"
+  if [[ -t 0 && -t 1 ]]; then
+    RUNTIME_INTERACTIVE=1
+  fi
 
   startup_sequence
   log "INFO" "START" "Starting $SCRIPT_NAME with config=$CONFIG_FILE"

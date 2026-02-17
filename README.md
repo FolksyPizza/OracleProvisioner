@@ -189,11 +189,32 @@ Example:
 - Aggressive: `--interval 10 --jitter 3` (higher API request rate)
 - Peak-ramp: `--interval 45 --jitter 15 --peak-hours 0-3 --peak-interval 20 --peak-jitter 5`
 
+### Retry Presets (Copy/Paste)
+
+- Conservative (45-60s):
+  - `./run.sh --config a1-spec.yaml --interval 45 --jitter 15`
+- Balanced (20-25s):
+  - `./run.sh --config a1-spec.yaml --interval 20 --jitter 5`
+- Aggressive (10-13s):
+  - `./run.sh --config a1-spec.yaml --interval 10 --jitter 3`
+- Peak-ramp (45-60s normally, 20-25s at 00:00-03:59):
+  - `./run.sh --config a1-spec.yaml --interval 45 --jitter 15 --peak-hours 0-3 --peak-interval 20 --peak-jitter 5`
+
 Notes:
 - Very low intervals can increase `429` / transient API errors.
 - `20/5` is usually a safe balance. Going below `10/3` for long runs is not recommended.
 - Retryable failures are handled automatically; the script keeps trying until success.
 - For long-running stability, start with Balanced and only go more aggressive if needed.
+
+### Runtime Keyboard Commands
+
+In an interactive terminal, the script shows these at startup:
+
+- `a`: show attempt counters and last result
+- `s`: show runtime status snapshot (uptime, last AD/name/result)
+- `p`: pause/resume retry loop
+- `h`: show help for runtime keys
+- `q`: quit the script cleanly
 
 ## Setup and Auth
 
