@@ -144,7 +144,7 @@ SSH keys are stored at:
 
 ```bash
 ./run.sh --setup [--yes]
-./run.sh --config a1-spec.yaml [--interval 45] [--jitter 15] [--log-file ./a1-provision.log] [--yes]
+./run.sh --config a1-spec.yaml [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
 ```
 
 Examples:
@@ -155,6 +155,9 @@ Examples:
 
 # Faster retry loop (20-25s between attempts):
 ./run.sh --config a1-spec.yaml --interval 20 --jitter 5
+
+# Faster retries during local midnight window, normal retries otherwise:
+./run.sh --config a1-spec.yaml --interval 45 --jitter 15 --peak-hours 0-3 --peak-interval 20 --peak-jitter 5
 
 # Slower retry loop (60-70s between attempts):
 ./run.sh --config a1-spec.yaml --interval 60 --jitter 10
@@ -167,21 +170,28 @@ Examples:
 
 - `--interval <sec>`: base delay before the next provisioning attempt
 - `--jitter <sec>`: random extra delay added to each retry, from `0..jitter`
+- `--peak-hours <start-end>`: local-hour window (0-23) for alternate retry timing
+- `--peak-interval <sec>`: base delay during the peak window
+- `--peak-jitter <sec>`: random extra delay during the peak window
 
 Effective wait time is:
 - `interval + random(0..jitter)`
 
 Example:
 - `--interval 20 --jitter 5` means each retry waits **20 to 25 seconds**.
+- `--interval 45 --jitter 15 --peak-hours 0-3 --peak-interval 20 --peak-jitter 5`
+  means retries run at **20-25s** from 00:00-03:59 local time and **45-60s** outside that window.
 
 ### Recommended Retry Profiles
 
 - Balanced (recommended): `--interval 20 --jitter 5`
 - Conservative: `--interval 45 --jitter 15` (default)
 - Aggressive: `--interval 10 --jitter 3` (higher API request rate)
+- Peak-ramp: `--interval 45 --jitter 15 --peak-hours 0-3 --peak-interval 20 --peak-jitter 5`
 
 Notes:
 - Very low intervals can increase `429` / transient API errors.
+- `20/5` is usually a safe balance. Going below `10/3` for long runs is not recommended.
 - Retryable failures are handled automatically; the script keeps trying until success.
 - For long-running stability, start with Balanced and only go more aggressive if needed.
 

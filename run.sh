@@ -68,13 +68,16 @@ usage() {
   cat <<EOF
 Usage:
   $SCRIPT_NAME --setup [--yes]
-  $SCRIPT_NAME --config a1-spec.yaml [--interval 45] [--jitter 15] [--log-file ./a1-provision.log] [--yes]
+  $SCRIPT_NAME --config a1-spec.yaml [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
 
 Options:
   --setup             Run beginner setup wizard (dependencies + OCI CLI config guidance)
   --config <path>     Path to YAML configuration file (required for run mode)
   --interval <sec>    Base retry interval in seconds (overrides YAML)
   --jitter <sec>      Max random jitter added to interval (overrides YAML)
+  --peak-hours <H-H>  Local-hour window for faster retries, e.g. 0-3 (overrides YAML)
+  --peak-interval <s> Base retry interval during peak window (overrides YAML)
+  --peak-jitter <s>   Max random jitter during peak window (overrides YAML)
   --log-file <path>   Log file path (default: ./a1-provision.log)
   --yes               Non-interactive mode (no prompts)
   -h, --help          Show this help
@@ -331,6 +334,9 @@ retryable_error() {
 parse_args() {
   local interval_override=""
   local jitter_override=""
+  local peak_hours_override=""
+  local peak_interval_override=""
+  local peak_jitter_override=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -348,6 +354,18 @@ parse_args() {
         ;;
       --jitter)
         jitter_override="${2:-}"
+        shift 2
+        ;;
+      --peak-hours)
+        peak_hours_override="${2:-}"
+        shift 2
+        ;;
+      --peak-interval)
+        peak_interval_override="${2:-}"
+        shift 2
+        ;;
+      --peak-jitter)
+        peak_jitter_override="${2:-}"
         shift 2
         ;;
       --log-file)
@@ -379,6 +397,15 @@ parse_args() {
   fi
   if [[ -n "$jitter_override" ]]; then
     export OVERRIDE_JITTER="$jitter_override"
+  fi
+  if [[ -n "$peak_hours_override" ]]; then
+    export OVERRIDE_PEAK_HOURS="$peak_hours_override"
+  fi
+  if [[ -n "$peak_interval_override" ]]; then
+    export OVERRIDE_PEAK_INTERVAL="$peak_interval_override"
+  fi
+  if [[ -n "$peak_jitter_override" ]]; then
+    export OVERRIDE_PEAK_JITTER="$peak_jitter_override"
   fi
 }
 
@@ -429,6 +456,11 @@ load_config() {
   RETRY_INTERVAL="$(cfg '.retry.interval_seconds // 45')"
   RETRY_JITTER="$(cfg '.retry.jitter_seconds // 15')"
   RETRY_INFINITE="$(cfg '.retry.infinite // true')"
+  RETRY_PEAK_ENABLED="$(cfg '.retry.peak_hours.enabled // false')"
+  RETRY_PEAK_START_HOUR="$(cfg '.retry.peak_hours.start_hour // 0')"
+  RETRY_PEAK_END_HOUR="$(cfg '.retry.peak_hours.end_hour // 3')"
+  RETRY_PEAK_INTERVAL="$(cfg '.retry.peak_hours.interval_seconds // 20')"
+  RETRY_PEAK_JITTER="$(cfg '.retry.peak_hours.jitter_seconds // 5')"
 
   MANAGED_TAG_KEY="$(cfg '.management.managed_by_tag_key // "ManagedBy"')"
   MANAGED_TAG_VALUE="$(cfg '.management.managed_by_tag_value // "A1RetryScript"')"
@@ -450,6 +482,23 @@ load_config() {
   if [[ -n "${OVERRIDE_JITTER:-}" ]]; then
     RETRY_JITTER="$OVERRIDE_JITTER"
   fi
+  if [[ -n "${OVERRIDE_PEAK_HOURS:-}" ]]; then
+    if [[ "${OVERRIDE_PEAK_HOURS}" =~ ^([0-9]{1,2})-([0-9]{1,2})$ ]]; then
+      RETRY_PEAK_START_HOUR="${BASH_REMATCH[1]}"
+      RETRY_PEAK_END_HOUR="${BASH_REMATCH[2]}"
+      RETRY_PEAK_ENABLED=true
+    else
+      die "CONFIG" "--peak-hours must be in H-H format, e.g. 0-3"
+    fi
+  fi
+  if [[ -n "${OVERRIDE_PEAK_INTERVAL:-}" ]]; then
+    RETRY_PEAK_INTERVAL="$OVERRIDE_PEAK_INTERVAL"
+    RETRY_PEAK_ENABLED=true
+  fi
+  if [[ -n "${OVERRIDE_PEAK_JITTER:-}" ]]; then
+    RETRY_PEAK_JITTER="$OVERRIDE_PEAK_JITTER"
+    RETRY_PEAK_ENABLED=true
+  fi
 
   if ! [[ "$RETRY_INTERVAL" =~ ^[0-9]+$ ]]; then
     log "WARN" "CONFIG" "retry.interval_seconds must be integer. Falling back to 45."
@@ -458,6 +507,26 @@ load_config() {
   if ! [[ "$RETRY_JITTER" =~ ^[0-9]+$ ]]; then
     log "WARN" "CONFIG" "retry.jitter_seconds must be integer. Falling back to 15."
     RETRY_JITTER=15
+  fi
+  if [[ "$RETRY_PEAK_ENABLED" != "true" && "$RETRY_PEAK_ENABLED" != "false" ]]; then
+    log "WARN" "CONFIG" "retry.peak_hours.enabled must be true/false. Falling back to false."
+    RETRY_PEAK_ENABLED=false
+  fi
+  if ! [[ "$RETRY_PEAK_START_HOUR" =~ ^[0-9]+$ ]] || [[ "$RETRY_PEAK_START_HOUR" -gt 23 ]]; then
+    log "WARN" "CONFIG" "retry.peak_hours.start_hour must be 0-23. Falling back to 0."
+    RETRY_PEAK_START_HOUR=0
+  fi
+  if ! [[ "$RETRY_PEAK_END_HOUR" =~ ^[0-9]+$ ]] || [[ "$RETRY_PEAK_END_HOUR" -gt 23 ]]; then
+    log "WARN" "CONFIG" "retry.peak_hours.end_hour must be 0-23. Falling back to 3."
+    RETRY_PEAK_END_HOUR=3
+  fi
+  if ! [[ "$RETRY_PEAK_INTERVAL" =~ ^[0-9]+$ ]]; then
+    log "WARN" "CONFIG" "retry.peak_hours.interval_seconds must be integer. Falling back to 20."
+    RETRY_PEAK_INTERVAL=20
+  fi
+  if ! [[ "$RETRY_PEAK_JITTER" =~ ^[0-9]+$ ]]; then
+    log "WARN" "CONFIG" "retry.peak_hours.jitter_seconds must be integer. Falling back to 5."
+    RETRY_PEAK_JITTER=5
   fi
 
   [[ -n "$OCI_REGION" ]] || die "CONFIG" ".oci.region is required."
@@ -546,6 +615,12 @@ network:
 retry:
   interval_seconds: 45
   jitter_seconds: 15
+  peak_hours:
+    enabled: false
+    start_hour: 0
+    end_hour: 3
+    interval_seconds: 20
+    jitter_seconds: 5
   infinite: true
 
 management:
@@ -759,6 +834,35 @@ count_active_managed_instances() {
       ] | length'
 }
 
+in_peak_window() {
+  local now_hour="$1"
+  local start="$2"
+  local end="$3"
+  if [[ "$start" -le "$end" ]]; then
+    [[ "$now_hour" -ge "$start" && "$now_hour" -le "$end" ]]
+    return
+  fi
+  [[ "$now_hour" -ge "$start" || "$now_hour" -le "$end" ]]
+}
+
+current_retry_profile() {
+  ACTIVE_RETRY_INTERVAL="$RETRY_INTERVAL"
+  ACTIVE_RETRY_JITTER="$RETRY_JITTER"
+  ACTIVE_RETRY_LABEL="standard"
+
+  if [[ "$RETRY_PEAK_ENABLED" == "true" ]]; then
+    local hour_now
+    hour_now="$(date +%H)"
+    hour_now="${hour_now#0}"
+    [[ -n "$hour_now" ]] || hour_now=0
+    if in_peak_window "$hour_now" "$RETRY_PEAK_START_HOUR" "$RETRY_PEAK_END_HOUR"; then
+      ACTIVE_RETRY_INTERVAL="$RETRY_PEAK_INTERVAL"
+      ACTIVE_RETRY_JITTER="$RETRY_PEAK_JITTER"
+      ACTIVE_RETRY_LABEL="peak"
+    fi
+  fi
+}
+
 next_display_name() {
   local max_id
   max_id="$(oci_cmd compute instance list \
@@ -856,6 +960,7 @@ print_success_instance_info() {
 retry_loop() {
   local ad_index=0
   local attempts=0
+  local last_retry_label=""
 
   while true; do
     if [[ "$ENFORCE_SINGLE_ACTIVE" == "true" ]]; then
@@ -907,11 +1012,16 @@ retry_loop() {
     esac
 
     ad_index=$(((ad_index + 1) % ${#ADS[@]}))
-    local jitter=0
-    if [[ "$RETRY_JITTER" -gt 0 ]]; then
-      jitter=$((RANDOM % (RETRY_JITTER + 1)))
+    current_retry_profile
+    if [[ "$ACTIVE_RETRY_LABEL" != "$last_retry_label" ]]; then
+      log "INFO" "RETRY_PROFILE" "Using ${ACTIVE_RETRY_LABEL} retry window: interval=${ACTIVE_RETRY_INTERVAL}s jitter=0-${ACTIVE_RETRY_JITTER}s"
+      last_retry_label="$ACTIVE_RETRY_LABEL"
     fi
-    local sleep_for=$((RETRY_INTERVAL + jitter))
+    local jitter=0
+    if [[ "$ACTIVE_RETRY_JITTER" -gt 0 ]]; then
+      jitter=$((RANDOM % (ACTIVE_RETRY_JITTER + 1)))
+    fi
+    local sleep_for=$((ACTIVE_RETRY_INTERVAL + jitter))
     log "INFO" "RETRY_SLEEP" "Sleeping ${sleep_for}s before next attempt."
     sleep "$sleep_for"
   done
@@ -943,6 +1053,11 @@ main() {
 
   log "INFO" "PLACEMENT" "Using AD cycle: ${ADS[*]}"
   log "INFO" "IMAGE" "Using image OCID: $RESOLVED_IMAGE_OCID"
+  if [[ "$RETRY_PEAK_ENABLED" == "true" ]]; then
+    log "INFO" "RETRY_CONFIG" "Peak window enabled (local time): hours=${RETRY_PEAK_START_HOUR}-${RETRY_PEAK_END_HOUR}, interval=${RETRY_PEAK_INTERVAL}s, jitter=0-${RETRY_PEAK_JITTER}s"
+  else
+    log "INFO" "RETRY_CONFIG" "Peak window disabled. Standard interval=${RETRY_INTERVAL}s jitter=0-${RETRY_JITTER}s"
+  fi
 
   retry_loop
 }
