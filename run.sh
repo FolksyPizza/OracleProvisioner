@@ -14,6 +14,7 @@ RUNTIME_LAST_NAME="n/a"
 RUNTIME_LAST_RESULT="n/a"
 RUNTIME_START_EPOCH=0
 RUNTIME_QUIT_CONFIRM_UNTIL=0
+RUNTIME_SPEED_INDEX=1
 
 cleanup() {
   if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
@@ -87,13 +88,66 @@ runtime_uptime() {
 
 runtime_print_help() {
   [[ "$RUNTIME_INTERACTIVE" -eq 1 ]] || return 0
-  log "INFO" "RUNTIME_HELP" "Keys: a=attempts s=status p=pause/resume h=help q=quit(confirm: press q twice)"
+  log "INFO" "RUNTIME_HELP" "Keys: a=attempts s=cycle-speed k=status p=pause/resume h=help q=quit(confirm: press q twice)"
 }
 
 runtime_print_status() {
   local uptime
   uptime="$(runtime_uptime)"
-  log "INFO" "RUNTIME_STATUS" "uptime=$uptime attempts=$RUNTIME_ATTEMPTS last_ad=$RUNTIME_LAST_AD last_name=$RUNTIME_LAST_NAME last_result=$RUNTIME_LAST_RESULT paused=$RUNTIME_PAUSED"
+  log "INFO" "RUNTIME_STATUS" "uptime=$uptime attempts=$RUNTIME_ATTEMPTS preset=${RETRY_PRESET:-custom} interval=${RETRY_INTERVAL}s jitter=0-${RETRY_JITTER}s last_ad=$RUNTIME_LAST_AD last_name=$RUNTIME_LAST_NAME last_result=$RUNTIME_LAST_RESULT paused=$RUNTIME_PAUSED"
+}
+
+apply_retry_preset() {
+  local preset="$1"
+  case "$preset" in
+    conservative)
+      RETRY_INTERVAL=45
+      RETRY_JITTER=15
+      RETRY_PEAK_ENABLED=false
+      RETRY_PRESET="conservative"
+      RUNTIME_SPEED_INDEX=0
+      ;;
+    balanced)
+      RETRY_INTERVAL=20
+      RETRY_JITTER=5
+      RETRY_PEAK_ENABLED=false
+      RETRY_PRESET="balanced"
+      RUNTIME_SPEED_INDEX=1
+      ;;
+    aggressive)
+      RETRY_INTERVAL=10
+      RETRY_JITTER=3
+      RETRY_PEAK_ENABLED=false
+      RETRY_PRESET="aggressive"
+      RUNTIME_SPEED_INDEX=2
+      ;;
+    peak_ramp)
+      RETRY_INTERVAL=45
+      RETRY_JITTER=15
+      RETRY_PEAK_ENABLED=true
+      RETRY_PEAK_START_HOUR=0
+      RETRY_PEAK_END_HOUR=3
+      RETRY_PEAK_INTERVAL=20
+      RETRY_PEAK_JITTER=5
+      RETRY_PRESET="peak_ramp"
+      RUNTIME_SPEED_INDEX=1
+      ;;
+    "")
+      ;;
+    *)
+      die "CONFIG" "Unknown preset '$preset'. Valid: conservative|balanced|aggressive|peak_ramp"
+      ;;
+  esac
+}
+
+runtime_cycle_speed() {
+  RUNTIME_SPEED_INDEX=$(((RUNTIME_SPEED_INDEX + 1) % 3))
+  case "$RUNTIME_SPEED_INDEX" in
+    0) apply_retry_preset "conservative" ;;
+    1) apply_retry_preset "balanced" ;;
+    2) apply_retry_preset "aggressive" ;;
+  esac
+  log "INFO" "RUNTIME_SPEED" "Switched speed preset to $RETRY_PRESET (interval=${RETRY_INTERVAL}s jitter=0-${RETRY_JITTER}s)"
 }
 
 runtime_poll_input() {
@@ -109,6 +163,10 @@ runtime_poll_input() {
         log "INFO" "RUNTIME_ATTEMPTS" "attempts=$RUNTIME_ATTEMPTS last_result=$RUNTIME_LAST_RESULT"
         ;;
       s|S)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
+        runtime_cycle_speed
+        ;;
+      k|K)
         RUNTIME_QUIT_CONFIRM_UNTIL=0
         runtime_print_status
         ;;
@@ -163,11 +221,12 @@ usage() {
   cat <<EOF
 Usage:
   $SCRIPT_NAME --setup [--yes]
-  $SCRIPT_NAME --config a1-spec.yaml [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
+  $SCRIPT_NAME --config a1-spec.yaml [--preset balanced] [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
 
 Options:
   --setup             Run beginner setup wizard (dependencies + OCI CLI config guidance)
   --config <path>     Path to YAML configuration file (required for run mode)
+  --preset <name>     Retry preset: conservative|balanced|aggressive|peak_ramp
   --interval <sec>    Base retry interval in seconds (overrides YAML)
   --jitter <sec>      Max random jitter added to interval (overrides YAML)
   --peak-hours <H-H>  Local-hour window for faster retries, e.g. 0-3 (overrides YAML)
@@ -427,6 +486,7 @@ retryable_error() {
 }
 
 parse_args() {
+  local preset_override=""
   local interval_override=""
   local jitter_override=""
   local peak_hours_override=""
@@ -441,6 +501,10 @@ parse_args() {
         ;;
       --config)
         CONFIG_FILE="${2:-}"
+        shift 2
+        ;;
+      --preset)
+        preset_override="${2:-}"
         shift 2
         ;;
       --interval)
@@ -487,6 +551,9 @@ parse_args() {
     [[ -f "$CONFIG_FILE" ]] || die "ARG_PARSE" "Config file not found: $CONFIG_FILE"
   fi
 
+  if [[ -n "$preset_override" ]]; then
+    export OVERRIDE_PRESET="$preset_override"
+  fi
   if [[ -n "$interval_override" ]]; then
     export OVERRIDE_INTERVAL="$interval_override"
   fi
@@ -550,6 +617,7 @@ load_config() {
 
   RETRY_INTERVAL="$(cfg '.retry.interval_seconds // 45')"
   RETRY_JITTER="$(cfg '.retry.jitter_seconds // 15')"
+  RETRY_PRESET="$(cfg '.retry.preset // ""')"
   RETRY_INFINITE="$(cfg '.retry.infinite // true')"
   RETRY_PEAK_ENABLED="$(cfg '.retry.peak_hours.enabled // false')"
   RETRY_PEAK_START_HOUR="$(cfg '.retry.peak_hours.start_hour // 0')"
@@ -571,17 +639,25 @@ load_config() {
   RT_NAME="$(cfg '.network.route_table_display_name // "ampere-rt"')"
   SL_NAME="$(cfg '.network.security_list_display_name // "ampere-sl"')"
 
+  apply_retry_preset "$RETRY_PRESET"
+  if [[ -n "${OVERRIDE_PRESET:-}" ]]; then
+    apply_retry_preset "$OVERRIDE_PRESET"
+  fi
+
   if [[ -n "${OVERRIDE_INTERVAL:-}" ]]; then
     RETRY_INTERVAL="$OVERRIDE_INTERVAL"
+    RETRY_PRESET="custom"
   fi
   if [[ -n "${OVERRIDE_JITTER:-}" ]]; then
     RETRY_JITTER="$OVERRIDE_JITTER"
+    RETRY_PRESET="custom"
   fi
   if [[ -n "${OVERRIDE_PEAK_HOURS:-}" ]]; then
     if [[ "${OVERRIDE_PEAK_HOURS}" =~ ^([0-9]{1,2})-([0-9]{1,2})$ ]]; then
       RETRY_PEAK_START_HOUR="${BASH_REMATCH[1]}"
       RETRY_PEAK_END_HOUR="${BASH_REMATCH[2]}"
       RETRY_PEAK_ENABLED=true
+      RETRY_PRESET="custom"
     else
       die "CONFIG" "--peak-hours must be in H-H format, e.g. 0-3"
     fi
@@ -589,10 +665,12 @@ load_config() {
   if [[ -n "${OVERRIDE_PEAK_INTERVAL:-}" ]]; then
     RETRY_PEAK_INTERVAL="$OVERRIDE_PEAK_INTERVAL"
     RETRY_PEAK_ENABLED=true
+    RETRY_PRESET="custom"
   fi
   if [[ -n "${OVERRIDE_PEAK_JITTER:-}" ]]; then
     RETRY_PEAK_JITTER="$OVERRIDE_PEAK_JITTER"
     RETRY_PEAK_ENABLED=true
+    RETRY_PRESET="custom"
   fi
 
   if ! [[ "$RETRY_INTERVAL" =~ ^[0-9]+$ ]]; then
@@ -708,6 +786,7 @@ network:
   security_list_display_name: "ampere-sl"
 
 retry:
+  preset: ""
   interval_seconds: 45
   jitter_seconds: 15
   peak_hours:
@@ -1159,6 +1238,7 @@ main() {
 
   log "INFO" "PLACEMENT" "Using AD cycle: ${ADS[*]}"
   log "INFO" "IMAGE" "Using image OCID: $RESOLVED_IMAGE_OCID"
+  log "INFO" "RETRY_PRESET" "Preset=${RETRY_PRESET:-custom}"
   if [[ "$RETRY_PEAK_ENABLED" == "true" ]]; then
     log "INFO" "RETRY_CONFIG" "Peak window enabled (local time): hours=${RETRY_PEAK_START_HOUR}-${RETRY_PEAK_END_HOUR}, interval=${RETRY_PEAK_INTERVAL}s, jitter=0-${RETRY_PEAK_JITTER}s"
   else
