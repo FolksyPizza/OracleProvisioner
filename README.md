@@ -214,7 +214,12 @@ In an interactive terminal, the script shows these at startup:
 - `s`: show runtime status snapshot (uptime, last AD/name/result)
 - `p`: pause/resume retry loop
 - `h`: show help for runtime keys
-- `q`: quit the script cleanly
+- `q`: quit with confirmation (press `q` twice within 2 seconds)
+
+Behavior notes:
+- Runtime keys work only in an interactive terminal (`./run.sh ...` directly).
+- In `nohup`, background jobs, or non-interactive shells, keyboard commands are disabled.
+- `p` pause keeps the process alive and waiting; press `p` again to resume retries.
 
 ## Setup and Auth
 
