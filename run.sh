@@ -13,6 +13,7 @@ RUNTIME_LAST_AD="n/a"
 RUNTIME_LAST_NAME="n/a"
 RUNTIME_LAST_RESULT="n/a"
 RUNTIME_START_EPOCH=0
+RUNTIME_QUIT_CONFIRM_UNTIL=0
 
 cleanup() {
   if [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]]; then
@@ -86,7 +87,7 @@ runtime_uptime() {
 
 runtime_print_help() {
   [[ "$RUNTIME_INTERACTIVE" -eq 1 ]] || return 0
-  log "INFO" "RUNTIME_HELP" "Keys: a=attempts s=status p=pause/resume h=help q=quit"
+  log "INFO" "RUNTIME_HELP" "Keys: a=attempts s=status p=pause/resume h=help q=quit(confirm: press q twice)"
 }
 
 runtime_print_status() {
@@ -104,12 +105,15 @@ runtime_poll_input() {
     fi
     case "$key" in
       a|A)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
         log "INFO" "RUNTIME_ATTEMPTS" "attempts=$RUNTIME_ATTEMPTS last_result=$RUNTIME_LAST_RESULT"
         ;;
       s|S)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
         runtime_print_status
         ;;
       p|P)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
         if [[ "$RUNTIME_PAUSED" -eq 0 ]]; then
           RUNTIME_PAUSED=1
           log "WARN" "RUNTIME_PAUSED" "Retry loop paused by user. Press 'p' again to resume."
@@ -119,15 +123,23 @@ runtime_poll_input() {
         fi
         ;;
       h|H|\?)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
         runtime_print_help
         ;;
       q|Q)
-        log "WARN" "RUNTIME_QUIT" "User requested quit."
-        exit 0
+        local now
+        now="$(date +%s)"
+        if [[ "$now" -le "$RUNTIME_QUIT_CONFIRM_UNTIL" ]]; then
+          log "WARN" "RUNTIME_QUIT" "User confirmed quit."
+          exit 0
+        fi
+        RUNTIME_QUIT_CONFIRM_UNTIL=$((now + 2))
+        log "WARN" "RUNTIME_QUIT_CONFIRM" "Press 'q' again within 2s to quit."
         ;;
       $'\n'|$'\r')
         ;;
       *)
+        RUNTIME_QUIT_CONFIRM_UNTIL=0
         log "INFO" "RUNTIME_KEY" "Unknown key '$key'. Press 'h' for help."
         ;;
     esac
