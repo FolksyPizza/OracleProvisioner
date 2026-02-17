@@ -144,7 +144,7 @@ SSH keys are stored at:
 
 ```bash
 ./run.sh --setup [--yes]
-./run.sh --config a1-spec.yaml [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
+./run.sh --config a1-spec.yaml [--preset balanced] [--interval 45] [--jitter 15] [--peak-hours 0-3] [--peak-interval 20] [--peak-jitter 5] [--log-file ./a1-provision.log] [--yes]
 ```
 
 Examples:
@@ -152,6 +152,9 @@ Examples:
 ```bash
 # Default retry timing from YAML (usually 45-60s between attempts):
 ./run.sh --config a1-spec.yaml
+
+# Use named preset:
+./run.sh --config a1-spec.yaml --preset balanced
 
 # Faster retry loop (20-25s between attempts):
 ./run.sh --config a1-spec.yaml --interval 20 --jitter 5
@@ -170,6 +173,11 @@ Examples:
 
 - `--interval <sec>`: base delay before the next provisioning attempt
 - `--jitter <sec>`: random extra delay added to each retry, from `0..jitter`
+- `--preset <name>`: quick preset for retry settings
+  - `conservative` = `45/15`
+  - `balanced` = `20/5`
+  - `aggressive` = `10/3`
+  - `peak_ramp` = `45/15` plus `00:00-03:59` at `20/5`
 - `--peak-hours <start-end>`: local-hour window (0-23) for alternate retry timing
 - `--peak-interval <sec>`: base delay during the peak window
 - `--peak-jitter <sec>`: random extra delay during the peak window
@@ -211,7 +219,8 @@ Notes:
 In an interactive terminal, the script shows these at startup:
 
 - `a`: show attempt counters and last result
-- `s`: show runtime status snapshot (uptime, last AD/name/result)
+- `s`: cycle speed preset live (`conservative` -> `balanced` -> `aggressive`)
+- `k`: show runtime status snapshot (uptime, active preset, last AD/name/result)
 - `p`: pause/resume retry loop
 - `h`: show help for runtime keys
 - `q`: quit with confirmation (press `q` twice within 2 seconds)
