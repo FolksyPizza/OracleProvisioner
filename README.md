@@ -150,9 +150,40 @@ SSH keys are stored at:
 Examples:
 
 ```bash
+# Default retry timing from YAML (usually 45-60s between attempts):
+./run.sh --config a1-spec.yaml
+
+# Faster retry loop (20-25s between attempts):
+./run.sh --config a1-spec.yaml --interval 20 --jitter 5
+
+# Slower retry loop (60-70s between attempts):
 ./run.sh --config a1-spec.yaml --interval 60 --jitter 10
+
+# Custom log file:
 ./run.sh --config a1-spec.yaml --log-file ./a1-provision.log
 ```
+
+### Retry Flags Explained
+
+- `--interval <sec>`: base delay before the next provisioning attempt
+- `--jitter <sec>`: random extra delay added to each retry, from `0..jitter`
+
+Effective wait time is:
+- `interval + random(0..jitter)`
+
+Example:
+- `--interval 20 --jitter 5` means each retry waits **20 to 25 seconds**.
+
+### Recommended Retry Profiles
+
+- Balanced (recommended): `--interval 20 --jitter 5`
+- Conservative: `--interval 45 --jitter 15` (default)
+- Aggressive: `--interval 10 --jitter 3` (higher API request rate)
+
+Notes:
+- Very low intervals can increase `429` / transient API errors.
+- Retryable failures are handled automatically; the script keeps trying until success.
+- For long-running stability, start with Balanced and only go more aggressive if needed.
 
 ## Setup and Auth
 
