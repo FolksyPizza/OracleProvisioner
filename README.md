@@ -1,4 +1,4 @@
-# **Oracle**Provision
+# **Oracle**Provisioner
 
 Provision Oracle Cloud `VM.Standard.A1.Flex` instances with automatic retry logic for limited-capacity scenarios.
 
